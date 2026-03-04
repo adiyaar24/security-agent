@@ -203,17 +203,29 @@ def cli():
 
 @cli.command()
 @click.option("--org", required=True, help="GitHub organization")
-@click.option("--repo", required=True, help="Repository to fix")
+@click.option("--limit", default=5, help="Max repos to fix")
 @click.option("--model", default="vertex_ai/claude-4-5-sonnet", help="Vertex Model String")
 @click.option("--create-pr/--no-pr", default=True, help="Create PR")
-def fix(org, repo, model, create_pr):
+def fix_all(org, limit, model, create_pr):
+    """Autonomously fix all repositories in an organization."""
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         console.print("[red]GITHUB_TOKEN environment variable required.[/red]")
         sys.exit(1)
         
+    github = GitHubClient(token)
+    repos = github.get_org_repos(org)
+    
+    console.print(f"[bold cyan]Found {len(repos)} public repositories. Processing up to {limit}...[/bold cyan]")
+    
     platform = ADKSecurityPlatform(org=org, model=model, github_token=token)
-    asyncio.run(platform.fix_and_pr(repo, create_pr))
-
-if __name__ == "__main__":
-    cli()
+    
+    for repo in repos[:limit]:
+        console.print(f"\n[bold yellow]=======================================================[/bold yellow]")
+        console.print(f"[bold yellow]Starting autonomous workflow for: {repo['name']}[/bold yellow]")
+        console.print(f"[bold yellow]=======================================================[/bold yellow]\n")
+        
+        try:
+            asyncio.run(platform.fix_and_pr(repo["name"], create_pr))
+        except Exception as e:
+            console.print(f"[bold red]Critical failure processing {repo['name']}: {e}[/bold red]")
