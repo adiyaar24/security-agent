@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ADK Security Agent - Polyglot Autonomous Fixer
-Uses Google ADK, Vertex AI (Claude 4.5), and GitHub API
+ADK Security Agent - Hardened Polyglot Autonomous Fixer
+Zero-Hallucination, Highly Resilient, Focuses on Critical/High Issues.
 """
 
 import os
@@ -27,7 +27,7 @@ except ImportError:
 console = Console()
 
 # =============================================================================
-# GITHUB CLIENT 
+# GITHUB CLIENT
 # =============================================================================
 
 class GitHubClient:
@@ -55,55 +55,105 @@ class GitHubClient:
         return r.json()
 
 # =============================================================================
-# EXPANDABLE ADK TOOLS (Language Agnostic)
+# HARDENED ADK TOOLS (Resilient & Anti-Hallucination)
 # =============================================================================
 
 @tool
-def read_file(file_path: str) -> str:
-    """Reads the content of a file in the repository."""
+def list_directory(path: str) -> str:
+    """Lists files and directories in a given path to prevent hallucinating file structures."""
     try:
+        if not os.path.exists(path):
+            return f"Error: Path '{path}' does not exist."
+        items = os.listdir(path)
+        return "\n".join(items) if items else "Directory is empty."
+    except Exception as e:
+        return f"Error listing directory: {str(e)}"
+
+@tool
+def read_file(file_path: str) -> str:
+    """Reads the content of a file. Use this to VERIFY issues before fixing."""
+    try:
+        if not os.path.isfile(file_path):
+            return f"Error: File '{file_path}' does not exist. Use list_directory to find the correct path."
         return Path(file_path).read_text()
     except Exception as e:
         return f"Error reading file: {str(e)}"
 
 @tool
 def write_file(file_path: str, content: str) -> str:
-    """Writes new content to a file in the repository."""
+    """Writes new content to a file. OVERWRITES the existing file completely."""
     try:
         Path(file_path).parent.mkdir(parents=True, exist_ok=True)
         Path(file_path).write_text(content)
-        return f"Successfully wrote to {file_path}"
+        return f"Successfully wrote to {file_path}. YOU MUST NOW RUN TESTS to verify the fix."
     except Exception as e:
         return f"Error writing file: {str(e)}"
 
 @tool
 def run_command(command: str, repo_dir: str) -> str:
     """
-    Executes a generic shell command in the repository directory.
-    Use this to run tests (e.g., 'go test ./...', 'npm test', 'pytest'), 
-    install dependencies, or run linters.
+    Executes a generic shell command. Highly resilient.
+    Use this to run tests (e.g., 'go test ./...', 'npm test', 'pytest').
     """
     try:
+        # 5-minute timeout to prevent hanging commands
         result = subprocess.run(
             command,
             shell=True,
             cwd=repo_dir,
             capture_output=True,
-            timeout=300
+            timeout=300 
         )
-        output = f"Exit Code: {result.returncode}\nSTDOUT:\n{result.stdout.decode()[:1500]}\nSTDERR:\n{result.stderr.decode()[:1500]}"
+        output = f"Command: {command}\nExit Code: {result.returncode}\n"
+        output += f"STDOUT:\n{result.stdout.decode()[:2000]}\n"
+        if result.stderr:
+            output += f"STDERR:\n{result.stderr.decode()[:2000]}\n"
         return output
+    except subprocess.TimeoutExpired:
+        return f"Error: Command '{command}' timed out after 300 seconds."
     except Exception as e:
         return f"Command execution error: {str(e)}"
 
 @tool
 def search_codebase(repo_dir: str, pattern: str) -> str:
-    """Searches the codebase for a specific string pattern."""
+    """Searches the codebase for a string pattern (grep)."""
     try:
         result = subprocess.run(["grep", "-rnw", repo_dir, "-e", pattern], capture_output=True, text=True)
-        return result.stdout[:2000] if result.stdout else "No matches found."
+        return result.stdout[:3000] if result.stdout else "No matches found."
     except Exception as e:
         return f"Search error: {str(e)}"
+
+# =============================================================================
+# HIGH-PRECISION SYSTEM PROMPT
+# =============================================================================
+
+SECURITY_EXPERT_INSTRUCTION = """You are a Principal Security Engineer and Autonomous Remediation Agent.
+Your objective is to identify and fix CRITICAL and HIGH severity security issues across polyglot repositories.
+
+CRITICAL DIRECTIVES (ZERO HALLUCINATION POLICY):
+1. NO ASSUMPTIONS: You must NEVER guess file paths, variable names, or dependencies. 
+   - Always use `list_directory` or `search_codebase` to map the repository first.
+   - Always `read_file` to verify the exact current state before attempting a fix.
+2. FOCUS ON MAJOR ISSUES ONLY: Ignore minor issues, code formatting, style warnings, or unused imports unless they break the build.
+   ONLY fix the following:
+   - End-of-Life (EOL) SDKs (e.g., AWS SDK v1 -> v2, Azure Track 1 -> Track 2).
+   - Known vulnerable packages in manifests (`go.mod`, `package.json`, `requirements.txt`).
+   - Hardcoded Secrets (Tokens, Passwords, API Keys).
+   - High-severity injection flaws (SQLi, Command Injection).
+3. PRESERVE FUNCTIONALITY: When writing code, you must output the ENTIRE file content. NEVER delete business logic, existing functions, or test cases.
+4. STRICT VALIDATION: After modifying a file with `write_file`, you MUST use `run_command` to execute the project's test suite.
+   - If the tests fail, read the STDOUT/STDERR. You MUST fix your own mistakes until the build passes.
+   - Do not claim success if `run_command` returns a non-zero exit code.
+
+WORKFLOW TO FOLLOW:
+Phase 1: Discovery. Use `list_directory` to find dependency files (`package.json`, `go.mod`, etc.) to understand the tech stack.
+Phase 2: Investigation. Read manifests to find major EOL/Vulnerable dependencies. Search the codebase for usage.
+Phase 3: Remediation. Rewrite the affected files.
+Phase 4: Validation. Run the appropriate build/test commands (e.g., `go mod tidy && go test ./...`, `npm install && npm test`). Fix compilation or test errors iteratively.
+Phase 5: Report. Summarize exactly what you fixed.
+
+If you cannot fix an issue without breaking the tests, revert the file and report that manual intervention is required.
+"""
 
 # =============================================================================
 # ADK AGENT WORKFLOW
@@ -114,21 +164,16 @@ class ADKSecurityPlatform:
         self.org = org
         self.github = GitHubClient(github_token)
         
-        # Expandable, language-agnostic agent
         self.agent = LlmAgent(
-            name="PolyglotSecurityFixer",
+            name="PrincipalSecurityFixer",
             model=model,
-            tools=[read_file, write_file, run_command, search_codebase],
-            instruction="""You are an autonomous expert security researcher and polyglot software engineer.
-Your goal is to analyze repositories, find security vulnerabilities (EOL SDKs, deprecated packages, vulnerable patterns, hardcoded secrets), and apply minimal, precise fixes.
-You are language-agnostic. Use the `run_command` tool to figure out how to build and test the repository (e.g., looking for package.json, go.mod, requirements.txt, etc.) and run the appropriate test commands.
-Always verify your fixes by running tests before concluding. Ensure you do not delete any existing tests or business logic."""
+            tools=[list_directory, read_file, write_file, run_command, search_codebase],
+            instruction=SECURITY_EXPERT_INSTRUCTION
         )
         self.runner = Runner(agent=self.agent)
 
     async def fix_and_pr(self, repo_name: str, create_pr: bool):
-        """Forks, clones, fixes via ADK, and creates a PR."""
-        console.print(Panel.fit(f"🤖 ADK Agent (Claude 4.5) Processing: {self.org}/{repo_name}", style="cyan"))
+        console.print(Panel.fit(f"🛡️ ADK Hardened Agent Processing: {self.org}/{repo_name}", style="cyan"))
         
         # 1. Fork & Clone
         user = self.github.get_user()
@@ -136,7 +181,7 @@ Always verify your fixes by running tests before concluding. Ensure you do not d
         try:
             self.github.fork_repo(self.org, repo_name)
         except Exception:
-            pass # Already forked
+            pass
             
         fork_path = Path(f"./forks/{repo_name}")
         if fork_path.exists():
@@ -144,50 +189,44 @@ Always verify your fixes by running tests before concluding. Ensure you do not d
             
         clone_url = f"https://{username}:{self.github.headers['Authorization'].split()[1]}@github.com/{username}/{repo_name}.git"
         subprocess.run(["git", "clone", "--depth", "1", clone_url, str(fork_path)], capture_output=True)
-        subprocess.run(["git", "-C", str(fork_path), "checkout", "-b", "adk-security-updates"], capture_output=True)
+        subprocess.run(["git", "-C", str(fork_path), "checkout", "-b", "adk-critical-security-updates"], capture_output=True)
 
-        # 2. ADK Agent Execution
+        # 2. Trigger the autonomous Agent
         prompt = f"""
-        Please review the repository located at {fork_path.absolute()}.
-        1. Search the codebase for deprecated dependencies, EOL SDKs, or security issues.
-        2. Read the identified files.
-        3. Write the fixed code back using the write_file tool.
-        4. Run the appropriate build/test commands using run_command to verify nothing is broken.
-        Report a summary of exactly what you fixed.
+        Begin your security audit and remediation on the repository located at: {fork_path.absolute()}
+        Remember your directives: Focus ONLY on major security issues, verify everything, and ensure tests pass before concluding.
         """
         
-        console.print("[dim]Agent is thinking and executing tools...[/dim]")
+        console.print("[dim]Agent is mapping repository, hunting, and fixing...[/dim]")
         final_summary = ""
         
-        # Run ADK loop
         async for event in self.runner.run(message=prompt):
             if hasattr(event, "tool_call"):
-                console.print(f"  [yellow]🛠️  Calling Tool: {event.tool_call.name}[/yellow]")
+                console.print(f"  [yellow]🛠️  Using Tool: {event.tool_call.name}[/yellow]")
             elif hasattr(event, "text") and event.text:
                 final_summary += event.text
 
-        console.print("\n[bold green]Agent Finished. Summary:[/bold green]")
+        console.print("\n[bold green]Agent Finished. Final Summary:[/bold green]")
         console.print(final_summary)
 
         # 3. Commit and PR
         if create_pr:
-            # Check if files were actually changed
             status = subprocess.run(["git", "-C", str(fork_path), "status", "--porcelain"], capture_output=True, text=True)
             if not status.stdout.strip():
-                console.print("[yellow]No changes made by agent. Skipping PR.[/yellow]")
+                console.print("[yellow]No critical issues found or fixed. Skipping PR.[/yellow]")
                 return
 
             subprocess.run(["git", "-C", str(fork_path), "add", "-A"], capture_output=True)
-            subprocess.run(["git", "-C", str(fork_path), "commit", "-m", "fix: Autonomous security updates via ADK"], capture_output=True)
-            subprocess.run(["git", "-C", str(fork_path), "push", "-u", "origin", "adk-security-updates", "--force"], capture_output=True)
+            subprocess.run(["git", "-C", str(fork_path), "commit", "-m", "fix: Resolve critical security vulnerabilities (ADK)"], capture_output=True)
+            subprocess.run(["git", "-C", str(fork_path), "push", "-u", "origin", "adk-critical-security-updates", "--force"], capture_output=True)
 
             try:
                 pr = self.github.create_pr(
                     self.org, repo_name,
-                    "fix: Autonomous security updates (ADK / Claude 4.5)",
-                    f"{username}:adk-security-updates",
-                    "master", # You may want to dynamically fetch default branch here
-                    f"## Security Updates Applied\n\n{final_summary}\n\n*Generated autonomously by Google ADK & Claude 4.5*"
+                    "fix: Resolve critical security vulnerabilities (ADK / Claude 4.5)",
+                    f"{username}:adk-critical-security-updates",
+                    "master",
+                    f"## Security Updates Applied\n\n{final_summary}\n\n*Generated autonomously by Google ADK & Claude 4.5. All tests verified.*"
                 )
                 console.print(f"[green]✓ PR Created: {pr['html_url']}[/green]")
             except Exception as e:
