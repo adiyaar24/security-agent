@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  adk-agent:
+    build: .
+    image: adk-security-agent:latest
+    container_name: adk-security-agent
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GOOGLE_GENAI_USE_VERTEXAI=1
+      - VERTEX_PROJECT=${ANTHROPIC_VERTEX_PROJECT_ID}
+      - VERTEX_LOCATION=${CLOUD_ML_REGION:-us-east5}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcloud/application_default_credentials.json
+    volumes:
+      - ./reports:/app/reports
+      - ./forks:/app/forks
+      - ~/.config/gcloud:/app/gcloud:ro
+    entrypoint: ["python", "adk_security_agent.py"]
+    command: ["fix", "--org", "drone-plugins", "--repo", "drone-s3"]
