@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+
 # Vertex AI config for Google ADK
 export GOOGLE_GENAI_USE_VERTEXAI=1
 export VERTEX_PROJECT="${ANTHROPIC_VERTEX_PROJECT_ID:-your-project-id}"
